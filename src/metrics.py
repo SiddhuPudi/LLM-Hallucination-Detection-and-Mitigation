@@ -28,3 +28,11 @@ def f1_score(pred, gold):
     precision = overlap / len(p)
     recall = overlap / len(g)
     return 2 * precision * recall / (precision + recall)
+
+def is_abstain(pred):
+    p = normalize(pred)
+    phrases = [
+        "insufficient evidence", "unknown", "not enough information",
+        "i do not know", "i dont know", "cannot be determined", "not mentioned",
+    ]
+    return any(s in p for s in phrases)
