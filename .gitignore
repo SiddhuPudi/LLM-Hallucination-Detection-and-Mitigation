@@ -1,0 +1,138 @@
+# ==============================================================================
+# Environment Variables & Secrets
+# ==============================================================================
+.env
+.env.*
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+!.env.example
+*.pem
+*.key
+secrets.json
+
+# ==============================================================================
+# Python & Virtual Environments
+# ==============================================================================
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+bin/
+lib/
+include/
+pyvenv.cfg
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Distribution / packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ==============================================================================
+# Machine Learning & Deep Learning (Models, Checkpoints, Weights)
+# ==============================================================================
+models/
+weights/
+checkpoints/
+*.pt
+*.pth
+*.bin
+*.onnx
+*.safetensors
+*.ckpt
+*.h5
+*.pkl
+*.pickle
+*.joblib
+
+# ==============================================================================
+# Data & Generated Dataset Splits
+# ==============================================================================
+# Ignore generated splits, caches, and large data dumps
+data/*.jsonl
+data/*.csv
+data/*.tsv
+data/*.parquet
+data/*.tar.gz
+data/*.zip
+data/*.gz
+data/*.7z
+
+# ==============================================================================
+# Outputs, Results & Experiment Tracking
+# ==============================================================================
+results/*
+!results/.gitkeep
+logs/
+*.log
+runs/
+wandb/
+.mlflow/
+mlruns/
+tensorboard/
+lightning_logs/
+
+# ==============================================================================
+# Jupyter Notebooks
+# ==============================================================================
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# ==============================================================================
+# Testing & Code Coverage
+# ==============================================================================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# ==============================================================================
+# IDEs & Text Editors
+# ==============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-workspace
+*.sublime-project
+
+# ==============================================================================
+# Operating System Artifacts (macOS / Windows / Linux)
+# ==============================================================================
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
