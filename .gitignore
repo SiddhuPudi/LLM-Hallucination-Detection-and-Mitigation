@@ -71,6 +71,7 @@ checkpoints/
 # Data & Generated Dataset Splits
 # ==============================================================================
 # Ignore generated splits, caches, and large data dumps
+data/
 data/*.jsonl
 data/*.csv
 data/*.tsv
