@@ -84,7 +84,7 @@ data/*.7z
 # Outputs, Results & Experiment Tracking
 # ==============================================================================
 results/*
-!results/.gitkeep
+!results/report.md
 logs/
 *.log
 runs/
