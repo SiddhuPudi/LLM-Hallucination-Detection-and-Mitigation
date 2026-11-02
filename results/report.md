@@ -1,7 +1,7 @@
 # LLM Hallucination Detection & Mitigation: Progress Report
 
 **Course:** Large Language Models, IIIT Dharwad
-**Team members:** Kuladeep (23BDS021), Thrivikram (23BCS100), Harshith (23BDS058), Sadan (23BDS048)
+**Team members:** Thrivikram (23BCS100), Kuladeep (23BDS021), Harshith (23BDS058), Sadan (23BDS048), Chaitra (23BDS016)
 **Status as of:** 1 November 2026. Baseline and RAG generation stages are complete; hallucination detection and mitigation are not built yet.
 
 ---
