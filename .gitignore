@@ -86,6 +86,7 @@ data/*.7z
 # ==============================================================================
 results/*
 !results/report.md
+!results/error_analysis_dev.csv
 logs/
 *.log
 runs/
