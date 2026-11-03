@@ -1,3 +1,4 @@
+import os
 import sys
 import pandas as pd
 from tqdm import tqdm
@@ -19,8 +20,16 @@ df = pd.read_json(f"data/{SPLIT}.jsonl", lines=True)
 if N:
     df = df.head(N)
 
-B = pd.read_json(f"data/rag_b_k3_{SPLIT}.jsonl", lines=True).set_index("id")["pred"].astype(str).to_dict()
-C = pd.read_json(f"data/rag_c_k3_{SPLIT}.jsonl", lines=True).set_index("id")["pred"].astype(str).to_dict()
+
+def load_preds(tag):
+    path = f"data/rag_{tag}_k3_{SPLIT}.jsonl"
+    if not os.path.exists(path):
+        print(f"(no {path} yet; skipping those answers)")
+        return {}
+    return pd.read_json(path, lines=True).set_index("id")["pred"].astype(str).to_dict()
+
+
+B, C = load_preds("b"), load_preds("c")
 
 items = []
 for _, r in df.iterrows():
@@ -44,6 +53,3 @@ res.to_json(f"data/claims_{SPLIT}.jsonl", orient="records", lines=True)
 print(f"\n{len(res)} claims written to data/claims_{SPLIT}.jsonl")
 print(res["source"].value_counts().to_string())
 print(f"Total tokens (including cached calls): {total_tokens}")
-print("\nSamples:")
-for _, r in res.groupby("source").head(2).iterrows():
-    print(f"\n[{r.source}] Q: {r.question[:100]}\n  answer: {r.answer[:100]}\n  claim:  {r.claim}")

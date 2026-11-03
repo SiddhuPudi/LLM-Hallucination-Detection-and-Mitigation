@@ -1,15 +1,20 @@
 import os
+import sys
 import pandas as pd
 from metrics import is_abstain, lenient_match, short_form_match
 
+SPLIT = sys.argv[1] if len(sys.argv) > 1 else "dev"
 FILES = {
-    "A Baseline": "data/baseline_dev.jsonl",
-    "B RAG (k=3)": "data/rag_b_k3_dev.jsonl",
-    "C RAG+grounded (k=3)": "data/rag_c_k3_dev.jsonl",
+    "A Baseline": f"data/baseline_{SPLIT}.jsonl",
+    "B RAG (k=3)": f"data/rag_b_k3_{SPLIT}.jsonl",
+    "C RAG+grounded (k=3)": f"data/rag_c_k3_{SPLIT}.jsonl",
 }
 
 rows, frames = [], {}
 for name, path in FILES.items():
+    if not os.path.exists(path):
+        print(f"(skipping {name}: {path} not found)")
+        continue
     d = pd.read_json(path, lines=True)
     d["pred"] = d["pred"].fillna("").astype(str)
     d["gold"] = d["gold"].astype(str)
@@ -20,6 +25,7 @@ for name, path in FILES.items():
     frames[name] = d
     rows.append({
         "config": name,
+        "n": len(d),
         "strict_contains": d["contains"].mean(),
         "lenient_contains": d["lenient"].mean(),
         "short_form_to_check": int(short_only.sum()),
@@ -30,21 +36,14 @@ for name, path in FILES.items():
 
 print(pd.DataFrame(rows).round(3).to_string(index=False))
 
-# Rows to verify by hand: short-form answers that were not auto-counted as correct
-B, C = frames["B RAG (k=3)"], frames["C RAG+grounded (k=3)"]
-check = C[["id", "question", "gold", "pred", "lenient", "short", "abst"]].merge(
-    B[["id", "pred", "lenient", "short", "abst"]], on="id", suffixes=("_C", "_B")
-)
-mask = (
-    ((check.lenient_C == 0) & (check.short_C == 1) & (~check.abst_C))
-    | ((check.lenient_B == 0) & (check.short_B == 1) & (~check.abst_B))
-)
-print("\nSHORT-FORM ANSWERS TO VERIFY BY HAND:")
-for _, r in check[mask].iterrows():
-    print(f"\nQ: {r.question[:120]}\n  gold: {r.gold}\n  B:    {r.pred_B}\n  C:    {r.pred_C}")
+print("\nSHORT-FORM ANSWERS TO VERIFY BY HAND (not counted as correct automatically):")
+for name, d in frames.items():
+    mask = (d.lenient == 0) & (d.short == 1) & (~d.abst)
+    for _, r in d[mask].iterrows():
+        print(f"\n[{name}] Q: {r.question[:110]}\n  gold: {r.gold}\n  pred: {r.pred}")
 
 os.makedirs("results", exist_ok=True)
 pd.concat([f.assign(config=n) for n, f in frames.items()])[
     ["config", "id", "question", "gold", "pred", "contains", "lenient", "short", "abst"]
-].to_csv("results/rescored_dev.csv", index=False)
-print("\nSaved results/rescored_dev.csv")
+].to_csv(f"results/rescored_{SPLIT}.csv", index=False)
+print(f"\nSaved results/rescored_{SPLIT}.csv")
