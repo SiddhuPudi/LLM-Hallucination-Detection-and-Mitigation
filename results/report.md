@@ -2,7 +2,7 @@
 
 **Course:** Large Language Models, IIIT Dharwad
 **Team members:** Thrivikram (23BCS100), Kuladeep (23BDS021), Harshith (23BDS058), Sadan (23BDS048), Chaitra (23BDS016)
-**Status as of:** 3 November 2026. Baseline, RAG generation, error analysis, re-scoring, claim extraction, NLI verification and the hallucination detector are complete on the dev split, and the detector variant and threshold have been selected on a 100-question validation subset. The mitigation loop and the test-scale experiments are not built or run yet.
+**Status as of:** 4 November 2026. All pipeline components are built: baseline, RAG, grounded RAG, claim extraction, the NLI and lexical hallucination detector, and the mitigation loop. The detector threshold was selected on validation data, and the mitigation loop was developed on the dev split and confirmed on a validation subset. The test split is still untouched; the test-scale experiments, plots, demo and final report remain.
 
 ---
 
@@ -11,11 +11,11 @@
 This project builds a question-answering system on the **HaluEval QA** dataset to study and reduce hallucinations in LLM answers. It compares four configurations:
 
 | Config | Description | Status |
-| --- | --- | --- |
+|---|---|---|
 | A. Baseline | The LLM answers the question directly, with no external evidence. | Done (dev) |
 | B. RAG | The top-3 evidence chunks are retrieved (embeddings + vector search) and given to the LLM. | Done (dev, validation) |
 | C. RAG + grounded prompt | The prompt tells the LLM to answer only from the evidence, or abstain. | Done (dev, validation) |
-| D. RAG + verification + mitigation | Claims in the answer are checked against the evidence; unsupported answers are regenerated. | Detector built and validated (variant and threshold chosen on validation data); mitigation loop not built yet |
+| D. RAG + verification + mitigation | Starts from Config C. Answers that C abstained on or that the detector flags as unsupported are regenerated with more retrieved evidence and checked again. | Done (dev, validation); detector threshold selected on validation |
 
 The systems will be compared on hallucination rate, answer accuracy, faithfulness, retrieval performance (Recall@K, MRR) and response latency. The project does not claim to eliminate hallucinations; it measures how much each stage improves reliability.
 
@@ -23,7 +23,7 @@ The systems will be compared on hallucination rate, answer accuracy, faithfulnes
 
 1. **Environment.** Python virtual environment on a MacBook Air (8 GB RAM, no GPU) with the required libraries installed.
 2. **Dataset.** HaluEval QA loaded and inspected (fields: `knowledge`, `question`, `right_answer`, `hallucinated_answer`). Cleaned by dropping empty fields and duplicate questions, leaving 10,000 rows.
-3. **Fixed splits.** Shuffled once with seed 42 and saved three permanent splits: `dev` (100 questions, used for development), `val` (300 questions, of which the first 100 were used for threshold selection) and `test` (500 questions, reserved for final results). The test split has not been used yet.
+3. **Fixed splits.** Shuffled once with seed 42 and saved three permanent splits: `dev` (100 questions, used for development), `val` (300 questions, of which the first 100 were used for threshold selection and for confirming the mitigation loop) and `test` (500 questions, reserved for final results). The test split has not been used yet.
 4. **LLM access.** Built `src/llm.py`, a reusable function that calls the LLM API with a disk cache (no prompt is ever paid for twice), throttling by requests and tokens per minute, retry handling for rate-limit and server errors, automatic retry when a reasoning model returns an empty answer, and logging of latency, model version and token usage.
 5. **Metrics.** Built `src/metrics.py` (see Section 4.3).
 6. **Baseline (Config A).** Ran the LLM on the dev split with no retrieval.
@@ -36,10 +36,13 @@ The systems will be compared on hallucination rate, answer accuracy, faithfulnes
 13. **Detector evaluation and analysis (dev).** Built `src/detect_eval.py`, `src/detector_analysis.py` and `src/detector_variants.py`, which evaluate the detector on HaluEval's labeled pairs and on the pipeline's own answers, examine its mistakes, and compare score variants (Sections 5.5 to 5.7).
 14. **Validation runs.** Generalized the scripts to work on any split (`run_rag.py`, `make_claims.py`, `verify.py`, `rescore.py`), ran Configs B and C on the first 100 validation questions, rewrote their answers and the HaluEval pairs into claims, and scored them with the NLI model (Section 5.8).
 15. **Detector module and threshold selection.** Built `src/detector.py` (the final scoring logic) and `src/tune_threshold.py`, which chose the detector variant and threshold on validation data using a rule fixed in advance (Section 4.7). The choice is saved in `results/chosen_detector.json`.
+16. **Threshold sensitivity check and dev application.** Built `src/check_detector.py`, which repeats the threshold selection with corrected labels and applies the chosen detector once to the dev answers (Section 5.9).
+17. **Mitigation loop (Config D).** Built `src/labels.py` (shared definition of correct answers) and `src/mitigate.py` (the loop, Section 4.8), and ran it on dev and on the validation subset (Section 5.10).
+18. **Mitigation analysis.** Built `src/mitigation_analysis.py`, which reads the saved loop logs and gives exact breakdowns by trigger type, verification status and retry round, plus a one-round variant computed offline.
 
 ## 3. Models used
 
-- **Answer-generating LLM:** `openai/gpt-oss-20b`, served through the free tier of the Groq API, with reasoning effort set to low. The same model is used for every configuration (baseline, RAG, claim rewriting), so only the prompt and the evidence change between experiments. A small model was chosen deliberately: it makes enough mistakes on closed-book questions for retrieval and verification to show a measurable effect.
+- **Answer-generating LLM:** `openai/gpt-oss-20b`, served through the free tier of the Groq API, with reasoning effort set to low. The same model is used for every configuration (baseline, RAG, claim rewriting, mitigation retries), so only the prompt and the evidence change between experiments. A small model was chosen deliberately: it makes enough mistakes on closed-book questions for retrieval and verification to show a measurable effect.
 - **Embedding model:** `sentence-transformers/all-MiniLM-L6-v2`, run locally on CPU.
 - **NLI verifier:** `MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli`, run locally on CPU (download about 370 MB). It outputs probabilities for entailment, neutral and contradiction.
 
@@ -51,7 +54,7 @@ The systems will be compared on hallucination rate, answer accuracy, faithfulnes
 - **Chunking:** word-based chunks of up to 120 words with a small overlap. The result was 10,040 chunks with an average of 55 words, so nearly every row stayed as a single chunk. The embedding model truncates its input at about 256 word pieces (roughly 150 words), so chunks longer than that would be cut; this is relevant for the planned chunk-size experiment, which will use small sizes.
 - **Embeddings:** `sentence-transformers/all-MiniLM-L6-v2` (384 dimensions, normalized). Embedding all 10,040 chunks took about 20 seconds on the MacBook Air.
 - **Search:** exact cosine similarity over all chunk vectors (numpy). FAISS is supported as an optional switch, but see problem 7 in Section 6.
-- **Retrieval depth:** top-3 chunks per question.
+- **Retrieval depth:** top-3 chunks per question (Configs B and C); the mitigation loop retrieves more (Section 4.8).
 
 ### 4.2 Prompts
 
@@ -66,7 +69,7 @@ The exact prompts are in Appendix B.
 
 - **Strict "contains":** the normalized gold answer appears inside the normalized prediction. This is the original metric and its numbers are unchanged.
 - **Lenient "contains":** strict match, or every key word of the gold answer appears in the prediction after cleaning. The cleaning treats Unicode dashes and curly quotes as ordinary ones, maps number words to digits ("eight" to "8"), and ignores the words a, an, the, and, of.
-- **Manually verified:** lenient match plus a manual decision on answers that are a shorter form of the gold answer (for example "Bangladesh" for "People's Republic of Bangladesh") and on one plural-form case. The verdicts are listed in Appendices A and A2. Incomplete answers (for example a year where a full date was asked) are not counted as correct.
+- **Manually verified:** lenient match plus a manual decision on answers that are a shorter form of the gold answer (for example "Bangladesh" for "People's Republic of Bangladesh") and on one plural-form case. The verdicts are listed in Appendices A and A2. Incomplete answers (for example a year where a full date was asked) are not counted as correct. In the code (`src/labels.py`) the verified label is "lenient match, or a short-form answer unless the question is on a short list of incomplete answers"; it therefore does not include the single plural-form verdict, which is why Config B's verified score is 0.82 in Section 5.10 and 0.83 in Section 5.2.
 
 Other metrics:
 
@@ -83,7 +86,6 @@ Other metrics:
 The generated answers are very short (often one to three words), so splitting them into sentences would do nothing. Instead, the LLM rewrites each question and answer as **one short declarative sentence** that states the answer as a fact, without adding information (prompt in Appendix B). For example, the question "Who won the singles title at a 1973 tournament held at a Los Angeles arena designed by Charles Luckman?" with the answer "Margaret Court" becomes a sentence stating that Margaret Court won that title.
 
 The claim step is applied to four kinds of answers:
-
 - HaluEval's `right_answer` and `hallucinated_answer` (labeled examples for measuring the detector, 100 each per split). Both go through the same rewriting step so that the detector cannot rely on style differences: HaluEval's hallucinated answers are usually full sentences while the right answers are short phrases.
 - The non-abstained answers of Config B and Config C.
 
@@ -92,7 +94,6 @@ This produced 381 claims on dev (98 from B, 83 from C) and 387 on the validation
 ### 4.5 Verification and detector
 
 **Premise and hypothesis.** The NLI model reads the evidence (premise) and the claim (hypothesis) and outputs the probabilities of entailment, neutral and contradiction. Two kinds of evidence are used for analysis:
-
 - **Retrieved evidence:** the top-3 passages that Configs B and C actually used (the realistic setting, and the only one the deployed detector can see).
 - **Oracle evidence:** the question's own `knowledge` text (an upper bound that separates retrieval errors from verifier errors).
 
@@ -117,15 +118,27 @@ Each evaluation on dev was run with retrieved and with oracle evidence.
 - **Data:** the first 100 validation questions, Config B and C answers (187 non-abstained answers, 29 of them wrong under the lenient metric: 18 of 99 for B and 11 of 88 for C) and 200 HaluEval pair claims. The test split was not used.
 - **Rule, fixed in advance:** choose the variant (mean or max) and the threshold (0.30 to 0.80 in steps of 0.05) that maximize **F0.5 on the pooled B and C answers**. F0.5 favours precision because a false alarm costs a regeneration and risks replacing a correct answer. Ties are broken by higher F1, then by the higher threshold. NLI-only is reported for reference and is not eligible.
 - **Why the pipeline answers rather than the HaluEval pairs:** the pairs are 50% hallucinated, whereas only about 15% of the pipeline answers are wrong, so a threshold tuned on the pairs would flag far too many correct answers in practice. The pairs are reported as a secondary check.
+- **Sensitivity check, rule fixed in advance:** because 12 of the 29 "wrong" validation labels were short-form answers that are actually correct, the selection was repeated with corrected labels. The threshold stays at 0.55 unless, under the corrected labels, the best threshold of the chosen variant is at least 0.10 away and its F0.5 is at least 0.05 higher than the F0.5 at 0.55.
+
+### 4.8 Mitigation loop (Config D)
+
+The loop starts from the Config C answers (and their detector scores, which were already computed) and uses the frozen detector (mean, threshold 0.55). Its settings were fixed before it was run and were not changed after seeing results.
+
+1. **Trigger:** a question is triggered if Config C abstained, or if the detector flags Config C's answer.
+2. **Retry round 1:** retrieve the top 5 passages and regenerate with the grounded prompt (Appendix B). If the new answer is not an abstention, rewrite it into a claim and check it with NLI and the lexical score against the **new** evidence.
+3. **Accept** the new answer if it is not flagged. Otherwise, **retry round 2** with the top 10 passages. (The NLI model reads at most 512 tokens, so with 10 passages it sees only the top-ranked ones; the lexical check sees all of them.)
+4. **Fallback** if no retry is accepted. Two policies are computed from the same run: **keep** (return the best-supported candidate, with ties favouring the original answer, and mark it unverified; abstain if there is no candidate) and **abstain** (return "Insufficient evidence").
+
+The design was chosen because the error analysis suggested that about half of Config B's wrong answers came from retrieval failures, and because the detector's precision is moderate (about half of the flags are false alarms), so the loop never discards a flagged answer without trying to improve it.
 
 ## 5. Results
 
-Sections 5.1 to 5.7 are on the 100-question dev split; Section 5.8 reports the validation subset. All numbers come from our own runs. The test split has not been used.
+Sections 5.1 to 5.7 are on the 100-question dev split; Section 5.8 reports the validation subset, Section 5.9 the threshold sensitivity check, and Section 5.10 the mitigation loop on both splits. All numbers come from our own runs. The test split has not been used.
 
 ### 5.1 Retrieval (120-word chunks, 10,040-chunk index; dev)
 
 | Metric | Value |
-| --- | --- |
+|---|---|
 | Recall@1 | 0.830 |
 | Recall@3 | 0.900 |
 | Recall@5 | 0.920 |
@@ -138,13 +151,13 @@ The correct passage is ranked first for 83% of questions and is in the top 3 for
 ### 5.2 Answer quality, hallucination proxy and cost (dev)
 
 | Config | Strict contains | Lenient contains | Manually verified | Abstained | Wrong and answered (strict / lenient / verified) |
-| --- | --- | --- | --- | --- | --- |
+|---|---|---|---|---|---|
 | A. Baseline | 0.31 | 0.31 | 0.33 | 0.01 | 0.68 / 0.68 / 0.66 |
 | B. RAG (top-3) | 0.71 | 0.77 | 0.83 | 0.02 | 0.27 / 0.21 / 0.15 |
 | C. RAG + grounded (top-3) | 0.72 | 0.76 | 0.79 | 0.17 | 0.11 / 0.07 / 0.04 |
 
 | Config | EM (strict) | Token F1 (strict) | Avg tokens per question | Avg API latency |
-| --- | --- | --- | --- | --- |
+|---|---|---|---|---|
 | A. Baseline | 0.25 | 0.301 | 290 | 0.73 s |
 | B. RAG (top-3) | 0.66 | 0.731 | 433 | 0.77 s |
 | C. RAG + grounded (top-3) | 0.63 | 0.717 | 434 | 0.69 s |
@@ -158,7 +171,7 @@ Average retrieval time was about 0.01 to 0.02 s per question. In B and C, the re
 **Where Config B's 15 remaining wrong answers come from (manually verified scoring):**
 
 | Cause | Count |
-| --- | --- |
+|---|---|
 | Retrieval failed and the model guessed (including "No such player.") | 8 |
 | Evidence was present but misread (for example "¡Viva Zapata!" for a question about an album; "Yes." to a statement-style question) | 3 |
 | Yes/no question answered incorrectly | 1 |
@@ -172,7 +185,6 @@ Roughly half of B's wrong answers therefore come from retrieval failures, which 
 **Config B vs Config C.** Relative to B, Config C turned 11 of B's 15 wrong answers into abstentions and 1 into a correct answer; 3 stayed wrong and 1 new wrong answer appeared (the model answered "Yes." to "Battletoads/Double Dragon is a game that can be played on this company's Game Boy?"). C gave up 5 answers that B had correct: 4 by abstaining (3 where the passage only implied the answer, and 1 where B had answered from its own memory because retrieval failed) and the "Yes." case. Net effect: correct answers 83 to 79 per 100, wrong answers 15 to 4, abstentions 2 to 17.
 
 **Other patterns.**
-
 - Two questions are phrased as statements ending in "?" (for example "July 31, 1912 this Nobel Prize winner in Economic Sciences founded EdChoice?") and the model sometimes answers "Yes." to them.
 - One B answer (David Puttnam) was correct although the retrieved evidence did not contain it. This shows that a correct answer is not necessarily a faithful one, which is the motivation for evidence-based verification.
 
@@ -189,7 +201,7 @@ Scoring 381 claims with the NLI model took 328 seconds with retrieved evidence a
 **HaluEval labeled pairs (200 claims, threshold 0.5 as a placeholder).**
 
 | Score | AUC retrieved | AUC oracle | Retrieved: precision / recall / F1 |
-| --- | --- | --- | --- |
+|---|---|---|---|
 | NLI only (1 - entailment) | 0.732 | 0.792 | 0.664 / 0.730 / 0.695 |
 | Lexical support only | 0.724 | 0.755 | 0.713 / 0.670 / 0.691 |
 | max(NLI, lexical) | 0.759 | 0.807 | 0.771 / 0.540 / 0.635 |
@@ -198,7 +210,7 @@ Scoring 381 claims with the NLI model took 328 seconds with retrieved evidence a
 Confusion matrices with retrieved evidence (rows: right / hallucinated claims; columns: kept / flagged):
 
 | Score | Right claims kept | Right claims flagged | Hallucinated caught | Hallucinated missed |
-| --- | --- | --- | --- | --- |
+|---|---|---|---|---|
 | NLI only | 63 | 37 | 73 | 27 |
 | max(NLI, lexical) | 84 | 16 | 54 | 46 |
 | mean(NLI, lexical) | 76 | 24 | 69 | 31 |
@@ -208,7 +220,7 @@ Using the NLI contradiction probability, or contradiction minus entailment, inst
 **The detector on the pipeline's own answers (dev; label: wrong under the lenient metric; retrieved evidence).**
 
 | Answers | Score | AUC | Precision | Recall | F1 |
-| --- | --- | --- | --- | --- | --- |
+|---|---|---|---|---|---|
 | Config B (98 answered, 21 wrong) | NLI only | 0.678 | 0.333 | 0.571 | 0.421 |
 | | Lexical only | 0.724 | 0.444 | 0.571 | 0.500 |
 | | max | 0.745 | 0.625 | 0.476 | 0.541 |
@@ -223,7 +235,6 @@ With oracle evidence the AUC values for Config B were 0.698 (NLI), 0.756 (lexica
 ### 5.6 Error analysis of the detector (dev)
 
 **False alarms (right claims flagged as hallucinated).** With NLI only and retrieved evidence, 37 of 100 right claims were flagged. All 10 right answers whose source passage was not retrieved were flagged, which is correct behaviour because the evidence really does not support them. Only 27 of the 90 right claims whose source passage was retrieved (30%) were flagged; with oracle evidence 26 of 100 were flagged. Of the 8 worst false alarms:
-
 - 6 involve passages that use a pronoun or omit the entity name ("It was founded in 1996 by Nobel laureate Milton Friedman" for EdChoice, "its long-time leader Roberto Formigoni" for Network Italy, "endorsed the diet" for the Werewolf Diet, "The film stars ... Catherine O'Hara", "As with the TF101, it was piloted by..." for the TF102). The claim names the entity, the passage does not, and the NLI model cannot connect them.
 - 1 claim copies question details that the passage does not contain (the release date and label of Joyner Lucas's mixtape).
 - 1 requires a comparison (which of two people contributed to more films).
@@ -231,7 +242,6 @@ With oracle evidence the AUC values for Config B were 0.698 (NLI), 0.756 (lexica
 The lexical support score was introduced to address the missing-entity cases: it checks whether the answer's own words occur in the evidence. It reduced false alarms from 37 to 24 (mean) or 16 (max) at the cost of more missed hallucinations (31 or 46 instead of 27).
 
 **Misses (hallucinated claims judged supported).** The 8 hallucinated claims with the highest support are mostly not detector errors:
-
 - 5 are actually true, so HaluEval's "hallucinated" label is wrong: the 337th Flight Test Squadron was based in California, Newark is what Street Fight and Cory Booker share, Milton Friedman is American, Neofelis lives in Southeast Asia, and Beth Gibbons and Han Seung-yeon are both performers.
 - 2 are true statements that do not answer the question (Adam Clayton Powell is a documentary, but the question asked which documentary is about Finnish rock groups; Claire Keane did contribute to Disney films, but the question asked who contributed more).
 - 1 is a true but generic statement (Robin Shou acted in Fatal Termination).
@@ -249,12 +259,12 @@ Only 2 questions had literally identical right and hallucinated claims, so the l
 
 ### 5.8 Validation results (first 100 validation questions)
 
-The validation subset was used only for confirming the answer-level pattern and for selecting the detector variant and threshold (Section 4.7). The baseline was not run on it.
+The validation subset was used for confirming the answer-level pattern, for selecting the detector variant and threshold (Section 4.7), and once for confirming the mitigation loop (Section 5.10). The baseline was not run on it.
 
 **5.8.1 Answer quality.**
 
 | Config | Strict contains | Lenient contains | Manually verified | Abstained | Wrong and answered (strict / lenient / verified) | EM (strict) | Token F1 (strict) | Avg tokens | Avg API latency |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+|---|---|---|---|---|---|---|---|---|---|
 | B. RAG (top-3) | 0.79 | 0.81 | 0.87 | 0.01 | 0.20 / 0.18 / 0.12 | 0.71 | 0.809 | 425 | 0.73 s |
 | C. RAG + grounded (top-3) | 0.75 | 0.77 | 0.83 | 0.12 | 0.13 / 0.11 / 0.05 | 0.67 | 0.769 | 437 | 0.71 s |
 
@@ -265,7 +275,7 @@ As on dev, a chunk from the question's own source row was retrieved for 90% of t
 Variants compared on the pooled B and C answers (187 answers, 29 wrong) and on the 200 pair claims; thresholds from 0.30 to 0.80:
 
 | Variant | AUC pipeline answers | AUC pairs | Best threshold | Flagged (true / false alarms) | Precision | Recall | F1 | F0.5 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+|---|---|---|---|---|---|---|---|---|
 | mean(NLI, lexical) | **0.752** | **0.779** | 0.55 | 24 (13 / 11) | 0.542 | 0.448 | 0.491 | **0.520** |
 | max(NLI, lexical) | 0.679 | 0.777 | 0.30 (lowest value tried) | 24 (13 / 11) | 0.542 | 0.448 | 0.491 | **0.520** |
 | NLI only (reference) | 0.691 | 0.712 | 0.80 (highest value tried) | 46 (16 / 30) | 0.348 | 0.552 | 0.427 | 0.376 |
@@ -273,7 +283,7 @@ Variants compared on the pooled B and C answers (187 answers, 29 wrong) and on t
 The threshold curve of the mean variant (pooled B and C answers):
 
 | Threshold | Flagged | True | False alarms | Precision | Recall | F1 | F0.5 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
+|---|---|---|---|---|---|---|---|
 | 0.45 | 58 | 20 | 38 | 0.345 | 0.690 | 0.460 | 0.383 |
 | 0.50 | 38 | 17 | 21 | 0.447 | 0.586 | 0.507 | 0.470 |
 | **0.55** | 24 | 13 | 11 | 0.542 | 0.448 | 0.491 | **0.520** |
@@ -285,16 +295,81 @@ The threshold curve of the mean variant (pooled B and C answers):
 Mean and max tie at their best operating point (F0.5 0.520), and the tie-break rule picked mean. Mean is also preferable on other grounds: its pipeline AUC is higher (0.752 vs 0.679), and its F0.5 stays between 0.47 and 0.52 for thresholds 0.50 to 0.60, whereas the best value of max sits at the lowest threshold tried and falls to 0.446 at the next one.
 
 **5.8.3 What the validation results show.**
-
 - **The lexical check holds up outside dev.** Compared with NLI alone, the mean combination improves the AUC by 0.061 on the pipeline answers (0.752 vs 0.691) and by 0.067 on the pairs (0.779 vs 0.712). The improvement has the same sign as on dev, for the pairs and for the pipeline answers. Each single comparison is still within about one standard error, so the evidence is consistent rather than conclusive.
 - **"max" is not recommended.** Its pipeline AUC (0.679) is lower than that of NLI alone.
 - **The detector is a moderate signal.** At the chosen threshold it catches roughly 45% of the wrong answers while flagging about 7% of the others, with a precision of about 0.54. Because the numbers behind these figures are small (24 flagged answers, 29 wrong answers), the 95% intervals are wide: roughly plus or minus 0.2 for the precision and plus or minus 0.18 for the recall.
-- **Implication for the mitigation loop.** A detector with this precision should not simply overwrite flagged answers. The mitigation loop has to tolerate false alarms, for example by regenerating, re-checking the new answer and keeping the original answer unless the new one is clearly better supported.
+- **Implication for the mitigation loop.** A detector with this precision should not simply overwrite flagged answers. The mitigation loop (Section 4.8) is therefore designed to tolerate false alarms: it regenerates, re-checks the new answer, and otherwise keeps the best-supported candidate.
+
+### 5.9 Threshold sensitivity to the labels, and the detector on dev
+
+**Sensitivity (validation).** With the original labels, 12 of the 29 "wrong" answers were short-form answers that are actually correct (6 in B, 6 in C). The selection was repeated with corrected labels (short-form answers count as correct; the three incomplete answers stay wrong). The variant ranking is unchanged and the threshold stays at 0.55: under corrected labels the best threshold of the mean variant is also 0.55 (F0.5 0.487), so the pre-set rule says to keep it.
+
+| Labels (chosen detector: mean, 0.55) | Wrong answers | AUC | Flagged (true / false alarms) | Precision | Recall | F1 | F0.5 |
+|---|---|---|---|---|---|---|---|
+| Original (lenient) | 29 | 0.752 | 24 (13 / 11) | 0.542 | 0.448 | 0.491 | 0.520 |
+| Corrected | 17 | 0.832 | 24 (11 / 13) | 0.458 | 0.647 | 0.537 | 0.487 |
+
+By configuration at 0.55: with corrected labels Config B has 12 wrong answers and 17 flagged answers (9 true, 8 false alarms; precision 0.529, recall 0.750) and Config C has 5 wrong answers and 7 flagged (2 true, 5 false alarms; precision 0.286, recall 0.400). The AUC under corrected labels is 0.832 for mean, 0.798 for max and 0.764 for NLI alone (0.752, 0.679 and 0.691 with the original labels). Threshold curve of the mean variant with corrected labels:
+
+| Threshold | Flagged | True | False alarms | Precision | Recall | F1 | F0.5 |
+|---|---|---|---|---|---|---|---|
+| 0.45 | 58 | 14 | 44 | 0.241 | 0.824 | 0.373 | 0.281 |
+| 0.50 | 38 | 13 | 25 | 0.342 | 0.765 | 0.473 | 0.385 |
+| **0.55** | 24 | 11 | 13 | 0.458 | 0.647 | 0.537 | **0.487** |
+| 0.60 | 20 | 9 | 11 | 0.450 | 0.529 | 0.486 | 0.464 |
+| 0.65 | 19 | 8 | 11 | 0.421 | 0.471 | 0.444 | 0.430 |
+
+The measured recall rises from 0.45 to 0.65 because the short-form answers had been counted as misses (two of them were also flagged). About 54% of the flags are false alarms under the corrected labels: 13 of the 170 answers that are not wrong (7.6%) were flagged, and the precision of 0.46 is about 5 times the base rate of wrong answers (9.1%). Config C is the hardest case.
+
+**The chosen detector applied once to dev** (not an independent test, because the lexical check was designed on dev):
+
+| Labels | Wrong answers | AUC | Flagged (true / false alarms) | Precision | Recall | F1 | F0.5 |
+|---|---|---|---|---|---|---|---|
+| Original (lenient) | 28 | 0.746 | 29 (15 / 14) | 0.517 | 0.536 | 0.526 | 0.521 |
+| Corrected | 20 | 0.837 | 29 (13 / 16) | 0.448 | 0.650 | 0.531 | 0.478 |
+
+With the original labels, Config B has 21 wrong answers and 19 flagged (11 true, 8 false) and Config C has 7 wrong and 10 flagged (4 true, 6 false); with corrected labels B has 16 wrong and 19 flagged (10 / 9) and C has 4 wrong and 10 flagged (3 / 7). On the pair claims the AUC is 0.771 (precision 0.771, recall 0.640, F1 0.699) on dev against 0.779 (0.792, 0.610, 0.689) on validation. Dev behaves like validation, which is reassuring but not independent evidence.
+
+### 5.10 Mitigation loop (Config D) results
+
+The loop (Section 4.8) was run on the 100 dev questions and on the first 100 validation questions with the frozen detector and settings. The success criterion fixed before the validation run was: D with the keep policy must have more verified-correct answers than C and no more wrong-and-answered answers than C. **It was met** (88 vs 83 verified-correct and 3 vs 5 wrong on validation).
+
+| Config | Split | Correct (lenient) | Correct (verified) | Abstained | Wrong and answered (lenient / verified) |
+|---|---|---|---|---|---|
+| B plain RAG | dev | 0.77 | 0.82 | 0.02 | 0.21 / 0.16 |
+| C grounded (start) | dev | 0.76 | 0.79 | 0.17 | 0.07 / 0.04 |
+| **D keep best-supported** | dev | **0.82** | **0.85** | 0.11 | 0.07 / 0.04 |
+| D abstain if flagged | dev | 0.75 | 0.78 | 0.20 | 0.05 / 0.02 |
+| B plain RAG | val | 0.81 | 0.87 | 0.01 | 0.18 / 0.12 |
+| C grounded (start) | val | 0.77 | 0.83 | 0.12 | 0.11 / 0.05 |
+| **D keep best-supported** | val | **0.82** | **0.88** | 0.09 | 0.09 / **0.03** |
+| D abstain if flagged | val | 0.78 | 0.83 | 0.14 | 0.08 / 0.03 |
+
+(The verified score of B on dev is 0.82 here and 0.83 in Section 5.2 because of the single plural-form verdict, see Section 4.3.)
+
+**Outcomes by trigger type (dev and validation pooled, verified labels, keep policy).**
+
+| Group | Questions | Outcome |
+|---|---|---|
+| Config C abstained | 29 (17 dev, 12 val) | 6 accepted retries, all correct; 3 flagged candidates kept (2 correct, 1 wrong); 20 stayed abstained |
+| Config C flagged an answer | 17 (10 dev, 7 val; 12 correct, 5 wrong) | 6 accepted retries (2 correct answers stayed correct, 3 wrong answers fixed, 1 stayed wrong); 11 fell back and were kept (10 correct, 1 wrong) |
+| Not triggered (answered, not flagged) | 154 | 150 correct, 4 wrong (2.6%) |
+
+- **Net gain over Config C:** verified-correct answers rise from 162 to 173 per 200 questions (+11): 8 abstentions were recovered with a correct answer (5 on dev, 3 on validation) and 3 wrong answers were fixed. **No answer that C had correct was made worse** (0 of 162).
+- **Compared with plain RAG (B):** D keep matches or slightly exceeds B's verified accuracy (0.85 vs 0.82 on dev, 0.88 vs 0.87 on validation) with about four times fewer wrong answers (0.04 vs 0.16 and 0.03 vs 0.12).
+- **The keep policy is better than the abstain policy.** Abstaining on every still-flagged answer lost 5 correct answers on each split (it throws away the flagged answers that were correct) and, pooled, gave 161 correct and 5 wrong answers against 173 correct and 7 wrong for keep; that is 12 correct answers given up to remove 2 wrong ones.
+- **Both retry rounds are useful.** Accepted retries by round (correct / accepted): round 1 (5 passages) 5 of 6 on dev and 2 of 2 on validation; round 2 (10 passages) 1 of 1 on dev and 3 of 3 on validation. With only one round the loop would have given 168 correct, 8 wrong and 24 abstentions (pooled) instead of 173, 7 and 20. The only wrong accepted retry (an incomplete answer) came from round 1.
+- **Examples of accepted retries.** "2007" became "January 12, 2007" for a release-date question; "Insufficient evidence" became the correct answers "15th" (Mincome prime minister), "Loud", "model" and "Picket Fences" after retrieving 5 or 10 passages; "Fargo" became "The Ladykillers". One validation "fix" ("Jason Biggs" to "Jason Biggs, Jesse Bradford, Adrien Brody") is a hedged list that contains the gold answer and counts as correct under the contains metric, which is generous.
+- **The "unverified" mark is only a weak signal.** Under the keep policy the answers that stayed flagged had a higher error rate than the others on dev (2 wrong of 9, 22%, against 2 of 80, 2.5%), but not on validation (0 of 5 against 3 of 86, 3.5%). Pooled it is 2 of 14 (14%) against 5 of 166 (3.0%), from very small counts.
+- **The remaining wrong answers are not fabricated entities.** Of the 7 wrong answers left after D (4 on dev, 3 on validation): 2 are synonyms that a gold-string metric cannot recognise ("United States" for "America", "Torah" for "Law of Moses"), 2 are incomplete answers ("Film director." for "film director and screenwriter", "New York." for "New York Cotton Exchange"), 2 are "Yes." answers to questions that are phrased as statements or look like yes/no questions, and 1 is a true statement that does not answer the question (Street Fight and Cory Booker). Six of the seven were never flagged, or were accepted after a retry, because their claims are supported by the evidence; the detector cannot see answers that are supported but non-responsive.
+- **Cost.** The loop used about 43K tokens on dev (including a 30-question smoke test; about 19K for the full run beyond it) and 31K on validation, about as much as one more RAG run per 100 questions, so Config D costs roughly 1.7 to 2 times the tokens of Config C. It triggers on 19 to 27% of the questions; each triggered question needs up to two retrieval and generation rounds and one claim rewrite and verification per answered retry. The loop took 203 seconds on dev and 290 seconds on validation, mostly because of the deliberate rate limiting.
+
+**What the mitigation results show.** On two independent samples of 100 questions, the loop recovers some of the answers that the grounded prompt gave up and fixes some wrong answers, without making any correct answer worse, and it keeps the wrong-answer rate at the level of Config C. The gains are small (5 to 6 questions per split, 11 per 200 pooled), and the two splits agree, so the result is consistent but not strongly established.
 
 ## 6. Problems faced and how they were solved
 
 | # | Problem | Cause | Solution |
-| --- | --- | --- | --- |
+|---|---|---|---|
 | 1 | The first LLM choice (Gemini 3.8 Flash via Google AI Studio) could not run the baseline. | The free tier allows only 5 requests per minute and 20 requests per day, far below what 100+ questions per experiment need. | Checked the usage dashboard, stopped the run, and switched to a provider with a larger free quota (Groq). |
 | 2 | Repeated HTTP 503 errors and 90-second read timeouts during the first baseline attempt. | The Gemini model was overloaded; the retry loop made things worse by spending the small daily quota on failed attempts. | Shortened timeouts, added smarter retry rules, and made the code stop with a clear message when a daily limit is reached. |
 | 3 | Running a model locally (Ollama) was not an option. | The laptop has 8 GB of RAM and froze even with the smallest model. | Used a hosted API instead of a local model. |
@@ -303,50 +378,53 @@ Mean and max tie at their best operating point (F0.5 0.520), and the tie-break r
 | 6 | Free-tier limits constrain the size of the experiments. | The free plan allows about 200K tokens per day. Measured cost: about 290 tokens per baseline question, about 433 per RAG question and about 240 per rewritten claim. | Cache every call, keep retrieved chunks short, smoke-test on 10 questions before each full run, and plan the heavy experiments (on a 200-question subset of test first) across several days. The whole validation stage (about 179K tokens) fitted into one day. |
 | 7 | The FAISS vector search crashed Python with a segmentation fault. | A known kind of conflict between FAISS and PyTorch on Apple Silicon, made more likely by the very new Python 3.14 and FAISS 1.15.1. Building embeddings worked; only the parallel search crashed. | Switched to exact cosine search with numpy, which gives the same results as a FAISS flat index at this size (10K vectors). FAISS is kept as an optional switch and can be retried in a Python 3.12 environment. |
 | 8 | The baseline metrics looked stricter than the model really was. | The model sometimes gives a correct answer in different words (for example "Bangladesh" vs "People's Republic of Bangladesh"). | Added the "contains" metric and manually reviewed 20 baseline errors: 16 were real wrong answers (mostly wrong named entities), 2 were correct but phrased differently, 1 was a partial date and 1 was an abstention. |
-| 9 | The error analysis showed that the "contains" metric still marked many correct RAG answers as wrong, which inflated the hallucination proxy. | The text normalizer did not handle Unicode dash characters (non-breaking hyphens), number words ("eight" vs "8"), extra middle names, or shorter forms of a name. | Kept the strict numbers unchanged for traceability, added a lenient metric that handles these cases, and manually verified the remaining short-form answers (Appendices A and A2). All three levels are reported. |
+| 9 | The error analysis showed that the "contains" metric still marked many correct RAG answers as wrong, which inflated the hallucination proxy. | The text normalizer did not handle Unicode dash characters (non-breaking hyphens) and narrow no-break spaces in the model's output, number words ("eight" vs "8"), extra middle names, or shorter forms of a name. | Kept the strict numbers unchanged for traceability, added a lenient metric that handles these cases, and manually verified the remaining short-form answers (Appendices A and A2). All three levels are reported. |
 | 10 | The NLI detector flagged many correct claims (37 of 100 right claims on dev). | HaluEval passages often use a pronoun instead of the entity name, so the NLI model cannot link the claim to the passage; some claims also copy question details that the passage lacks. | Added a lexical support score (do the answer's words appear in the evidence?) and combined it with NLI, which cut the false alarms to 24 (mean) or 16 (max) on dev. The combination was designed on dev; on the validation subset it improved the AUC over NLI alone by about 0.06 to 0.07 (Section 5.8). |
 | 11 | The detector appeared to miss many hallucinated claims. | Many of HaluEval's "hallucinated" answers are actually true or merely fail to answer the question, so they are not hallucinations in the evidence-based sense. | Inspected the highest-support misses, documented the label noise as a limitation, and planned a manual audit of all missed claims. |
 | 12 | Minor tooling issues. | zsh treated a trailing `#` comment in a pasted command as an argument; Python 3.14 produced harmless FutureWarnings from PyTorch, and the Hugging Face hub warned about unauthenticated downloads. | Removed the comments from the commands; the warnings were ignored because they do not affect results. |
-| 13 | Choosing a threshold on few wrong answers is noisy, and the tuning labels contain errors. | The validation sample has only 29 wrong answers, and 12 of them (6 in B and 6 in C) are short-form answers that the lenient metric marks as wrong although they are correct (Appendix A2), which penalizes the detector. | Fixed the selection rule in advance, pooled the B and C answers, checked that Config B alone gives the same choice, and report the uncertainty of the operating point. A re-tuning with manually verified labels is planned as a sensitivity check. |
+| 13 | Choosing a threshold on few wrong answers is noisy, and the tuning labels contain errors. | The validation sample has only 29 wrong answers, and 12 of them (6 in B and 6 in C) are short-form answers that the lenient metric marks as wrong although they are correct (Appendix A2), which penalizes the detector. | Fixed the selection rule in advance, pooled the B and C answers, checked that Config B alone gives the same choice, and ran a sensitivity check with corrected labels (Section 5.9): the best threshold stayed at 0.55, so it was kept. |
+| 14 | The first reading of the dev mitigation log was partly misleading. | With only 27 triggered questions on dev, the second retry round looked marginal (1 of 7 accepted retries) and the "unverified" mark looked strongly informative (22% against 2.5% errors); one count of unflagged wrong answers was also read incorrectly from the transition tables. | Ran the loop once on validation with the settings unchanged, and wrote an exact log analysis (`src/mitigation_analysis.py`) for both splits. Round 2 turned out useful (3 of 5 accepted retries on validation) and the unverified mark only a weak signal; the settings were not changed after seeing these results. |
+| 15 | Some of the remaining "wrong" answers after the loop are scoring artifacts. | The correctness labels compare against one gold string, so synonyms ("United States" for "America", "Torah" for "Law of Moses") count as wrong, while a hedged list answer that contains the gold answer counts as correct. | Documented them in Section 5.10 and the limitations instead of adjusting the labels after the fact; a manual audit of the final answers can be added at the end. |
 
 ## 7. Observations and limitations
 
-- **Small samples.** Dev and validation results each come from 100 questions at temperature 0, one run. With 100 questions, a proportion near 0.8 has a margin of roughly plus or minus 8 to 9 percentage points, so small gaps (such as B vs C on correctness) should not be treated as real differences. The large gaps (A vs B and C, and the drop in wrong answers) are clear, and the B-versus-C pattern repeats on validation.
-- **Detector results are moderate and uncertain.** With 200 balanced claims an AUC has a standard error of roughly 0.03, and with 29 wrong answers on validation about 0.05 or more, so the differences between the score variants (0.02 to 0.07) are within about one standard error each, although they point the same way on dev and validation. The chosen operating point rests on 24 flagged answers, so its precision and recall are uncertain by about plus or minus 0.2. Config C alone has too few wrong answers (7 on dev) for separate conclusions.
-- **Tuning labels are imperfect.** The labels used for threshold selection come from the lenient metric, which marks short-form correct answers as wrong. About 12 of the 29 validation positives are such answers, so the measured recall and precision of the detector are likely pessimistic, and the best threshold could shift.
-- **Scoring depends on gold-string matching.** Even the lenient and manually verified scores compare against a single gold string, which penalizes valid alternative phrasings. The manual verdicts in Appendices A and A2 were made by one person (the author) on a small number of answers.
+- **Small samples.** Dev and validation results each come from 100 questions at temperature 0, one run. With 100 questions, a proportion near 0.8 has a margin of roughly plus or minus 8 to 9 percentage points, so small gaps (such as B vs C on correctness) should not be treated as real differences. The large gaps (A vs B and C, and the drop in wrong answers) are clear, and the B-versus-C pattern and the mitigation gains repeat across the two splits.
+- **Detector results are moderate and uncertain.** With 200 balanced claims an AUC has a standard error of roughly 0.03, and with 29 wrong answers on validation about 0.05 or more, so the differences between the score variants (0.02 to 0.07) are within about one standard error each, although they point the same way on dev and validation. The chosen operating point rests on 24 flagged answers, so its precision and recall are uncertain by about plus or minus 0.2. About half of the flags (71% among Config C's flagged answers, pooled over dev and validation) are false alarms.
+- **Mitigation results rest on small counts.** The gain of Config D over Config C is 11 answers per 200 questions, and each split contributes 5 or 6. The loop's settings were fixed before running and confirmed once on validation, but a single run on two small samples is not conclusive. The test split has not been used.
+- **Tuning labels and evaluation labels are imperfect.** The labels used for threshold selection come from the lenient metric, which marks short-form correct answers as wrong (about 12 of the 29 validation positives); the sensitivity check shows the chosen threshold is unchanged, but the measured precision and recall depend on the labels. The verified labels used for the mitigation results depend on the author's short-form verdicts and on a short list of incomplete answers.
+- **Scoring depends on gold-string matching.** Even the lenient and manually verified scores compare against a single gold string, which penalizes valid alternative phrasings (synonyms) and can be generous to hedged list answers. The manual verdicts in Appendices A and A2 were made by one person (the author) on a small number of answers.
+- **The detector cannot see supported but non-responsive answers.** A "Yes." answer to a statement-style question, an incomplete answer, or a true statement that does not answer the question produces a supported claim, so verification and the mitigation loop cannot catch it. These account for most of the wrong answers that remain after the loop.
 - **HaluEval label noise.** Some "hallucinated" answers are actually true or only fail to answer the question, so detector accuracy on the labeled pairs is understated by an unknown amount. Some questions are also phrased as statements, one is malformed, and yes/no gold answers cannot be found literally in the evidence, so the "evidence had answer" flag is unreliable for them.
 - **Claim rewriting can lose the question's constraint.** A claim can be true and supported without answering the question (for example for comparison questions or for a "Yes." answer to a statement-style question), so the detector measures support by evidence, not correctness.
 - **Evidence passages often lack the entity name.** HaluEval passages frequently replace the entity name with a pronoun or start mid-sentence, so even correctly retrieved evidence can be only implicit. This makes strict grounding harder, explains several abstentions and is the main cause of the NLI false alarms.
-- **Easier-than-real retrieval.** The evidence corpus is built from the dataset's own `knowledge` field, so retrieval is easier than open-domain search. The retrieval numbers should be read with that in mind.
+- **Easier-than-real retrieval.** The evidence corpus is built from the dataset's own `knowledge` field, so retrieval is easier than open-domain search. The retrieval numbers should be read with that in mind. In the loop, the NLI model reads at most 512 tokens, so with 10 retrieved passages it sees only the top-ranked ones.
 - **Reported latency is API call time only.** Wall-clock time per question was several seconds because the code deliberately pauses between calls to respect rate limits, and sometimes retries.
-- **Prompts were not tuned.** One prompt per configuration was used. The validation split was used only for selecting the detector threshold; the test split is untouched.
+- **Prompts were not tuned.** One prompt per configuration was used. The validation split was used only for selecting the detector threshold and for one confirmation run of the mitigation loop; the test split is untouched.
 
 ## 8. Reproducibility and compute cost
 
-- **Reproducibility.** Fixed splits (seed 42), temperature 0 for all LLM calls, every LLM call cached on disk (keyed by model, reasoning setting, temperature, token limit and prompt), and the model version logged with each answer. All results are produced by scripts in `src/` from saved files, and the scoring, detector analysis, variant comparison and threshold selection re-use saved predictions and claim scores without new API calls. The selected detector (variant, threshold, selection rule) is saved in `results/chosen_detector.json`.
+- **Reproducibility.** Fixed splits (seed 42), temperature 0 for all LLM calls, every LLM call cached on disk (keyed by model, reasoning setting, temperature, token limit and prompt), and the model version logged with each answer. All results are produced by scripts in `src/` from saved files, and the scoring, detector analysis, variant comparison, threshold selection and mitigation analysis re-use saved predictions, claim scores and loop logs without new API calls. The selected detector (variant, threshold, selection rule) is saved in `results/chosen_detector.json`, and the loop logs are saved in `data/mitigate_dev.jsonl` and `data/mitigate_val.jsonl`. The loop's settings are listed in Appendix C.
 - **API token budget used so far.**
   - Dev stages: baseline about 29K tokens (100 questions), Config B about 43K, Config C about 43K, claim rewriting about 83K new tokens (381 claims), about 199K in total.
   - Validation stage: Config B about 42.5K, Config C about 43.7K, claim rewriting about 93K (387 claims, of which about 21K were new for Config C because most of its answers were identical to B's and therefore cached), about 179K in total, completed within one day.
-  - Overall: about 378K tokens.
-- **Local compute (MacBook Air, CPU only).** Embedding the 10,040 chunks about 20 seconds; retrieval about 0.01 to 0.02 seconds per question; NLI verification of 381 dev claims 328 seconds (retrieved evidence) and 161 seconds (oracle evidence); NLI verification of the 387 validation claims 266 and 127 seconds.
+  - Mitigation loop: about 43K on dev (including a 30-question smoke test) and about 31K on validation.
+  - Overall: about 452K tokens.
+- **Local compute (MacBook Air, CPU only).** Embedding the 10,040 chunks about 20 seconds; retrieval about 0.01 to 0.02 seconds per question; NLI verification of 381 dev claims 328 seconds (retrieved evidence) and 161 seconds (oracle evidence); NLI verification of the 387 validation claims 266 and 127 seconds; the mitigation loop 203 seconds on dev and 290 seconds on validation (including rate limiting and loading both models).
 
 ## 9. Next steps
 
-1. **Sensitivity check of the threshold (no API calls).** Re-run the threshold search with labels in which short-form correct answers count as correct, and report whether the chosen variant and threshold change.
-2. **Sanity check on dev.** Apply the chosen detector (mean, 0.55) once to the dev answers and compare with the validation behaviour.
-3. **Mitigation loop (Config D), developed on dev.** When the detector flags an answer, retrieve more evidence (for example top-6) and regenerate with the grounded prompt, verify the new answer, and allow at most two retries. Because the detector's precision is moderate, the original answer is replaced only when the new answer is better supported, and the system abstains if the answer stays unsupported. Measure correct, wrong and abstained rates, extra tokens and latency against B and C.
-4. **Label-noise audit (optional).** Check by hand the hallucinated claims that the detector missed, to estimate how many are not really hallucinations, and report the detector's accuracy on the cleaned pairs.
-5. **Controlled experiments E1 to E6** on a fixed subset of the test split (about 200 questions, run over several days because of the token limit): baseline vs RAG, Top-K of 1, 3 and 5, chunk sizes (small sizes such as 25, 40 and 60 words, since passages are short), prompt variants, verification, and mitigation. All reported with strict, lenient and manually verified scoring where applicable. The test split is used once, with the detector and threshold frozen.
-6. **Tables, plots and final error analysis.**
-7. **Streamlit demo, final report and presentation.**
+1. **Test-scale experiments (the final evaluation).** Run the whole pipeline (A, B, C and D) once on a fixed subset of about 200 test questions, with the detector (mean, 0.55) and the loop settings frozen. Rough token cost: baseline about 58K, Config B about 86K, Config C about 86K, claims for Config C's answers about 45K, the mitigation loop about 85K, so about 360K tokens over two to three days of the free tier. All results are reported with strict, lenient and manually verified scoring, and the test split is used once.
+2. **Controlled ablations E2 and E3:** Top-K of 1, 3 and 5 and small chunk sizes (25, 40 and 60 words, since passages are short). The retrieval metrics are cheap (local); answer-level comparisons use a smaller subset.
+3. **Label-noise audit (optional).** Check by hand the hallucinated claims that the detector missed, to estimate how many are not really hallucinations, and report the detector's accuracy on the cleaned pairs. A short audit of the final answers' remaining "wrong" cases can be added at the same time.
+4. **Tables, plots and final error analysis.**
+5. **Streamlit demo, final report and presentation.**
 
 ## Appendix A: Manual verdicts on short-form answers (dev split)
 
 These answers are shorter or slightly different forms of the gold answer. Each was judged by hand and is reflected in the "manually verified" scores.
 
 | Question (shortened) | Gold answer | Model answer | Verdict |
-| --- | --- | --- | --- |
+|---|---|---|---|
 | Who was born first, Sharon den Adel or Ezra Koenig? | Sharon Janny den Adel | Sharon den Adel (A, B, C) | Correct (same person, common name) |
 | Azfar Hussain ... official language of which country? | People's Republic of Bangladesh | Bangladesh (A, B, C) | Correct (short form of the country name) |
 | What the locals consider ... suburb of a town in the Division of Mayo | township of Stirling | Stirling (B, C) | Correct |
@@ -361,7 +439,7 @@ These answers are shorter or slightly different forms of the gold answer. Each w
 ## Appendix A2: Manual verdicts on short-form answers (validation subset)
 
 | Question (shortened) | Gold answer | Model answer | Verdict |
-| --- | --- | --- | --- |
+|---|---|---|---|
 | Who is the coach of the Karachi Kings, owned by Salman Iqbal? | coached by Mickey Arthur | Mickey Arthur (B, C) | Correct |
 | Titanic Days is which English singer and songwriter's fourth studio album? | Kirsty Anna MacColl | Kirsty MacColl (B, C) | Correct |
 | The 2017 British GT Championship ... (circuit question) | Oulton Park Circuit | Oulton Park (B, C) | Correct |
@@ -393,7 +471,7 @@ Question: {question}
 Answer:
 ```
 
-**Grounded RAG with abstention (Config C):**
+**Grounded RAG with abstention (Config C, also used for the mitigation retries):**
 
 ```
 Answer the question using ONLY the evidence below. Do not use outside knowledge. If the evidence does not contain the answer, reply exactly: Insufficient evidence.
@@ -416,4 +494,20 @@ Answer: {answer}
 Sentence:
 ```
 
-In the RAG prompts, `{evidence}` is the three retrieved passages numbered [1], [2] and [3].
+In the RAG prompts, `{evidence}` is the retrieved passages numbered [1], [2], [3] and so on (three for Configs B and C, five or ten in the mitigation retries).
+
+## Appendix C: Frozen settings of the detector and the mitigation loop
+
+| Setting | Value |
+|---|---|
+| Detector variant | mean(NLI entailment, lexical support), retrieved evidence |
+| Flag rule | 1 minus the combined support is at least 0.55 |
+| Selection | maximum F0.5 on pooled B and C validation answers; sensitivity check with corrected labels kept 0.55 |
+| NLI model | MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli, premise truncated at 512 tokens |
+| Starting answers | Config C (top-3, grounded prompt) |
+| Trigger | C abstained, or C's answer flagged |
+| Retry rounds | top 5 passages, then top 10 passages, grounded prompt |
+| Accept rule | the retried answer is not an abstention and is not flagged against the retry evidence |
+| Fallback (primary) | keep the best-supported candidate (ties favour the original), unverified; abstain if there is no candidate |
+| Fallback (secondary) | abstain ("Insufficient evidence") |
+| Correctness labels | lenient and verified (`src/labels.py`) |
