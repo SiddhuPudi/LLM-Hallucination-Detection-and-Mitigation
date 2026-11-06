@@ -7,6 +7,7 @@ from metrics import is_abstain
 
 SPLIT = sys.argv[1] if len(sys.argv) > 1 else "dev"
 N = int(sys.argv[2]) if len(sys.argv) > 2 else None
+SOURCES = set((sys.argv[3] if len(sys.argv) > 3 else "right,halluc,B,C").split(","))
 
 PROMPT = (
     "Rewrite the question and its answer as ONE short, self-contained declarative sentence "
@@ -34,11 +35,13 @@ B, C = load_preds("b"), load_preds("c")
 items = []
 for _, r in df.iterrows():
     qid = int(r["id"])
-    items.append((qid, "right", r["question"], str(r["right_answer"])))
-    items.append((qid, "halluc", r["question"], str(r["hallucinated_answer"])))
+    if "right" in SOURCES:
+        items.append((qid, "right", r["question"], str(r["right_answer"])))
+    if "halluc" in SOURCES:
+        items.append((qid, "halluc", r["question"], str(r["hallucinated_answer"])))
     for src, preds in (("B", B), ("C", C)):
         a = preds.get(qid, "")
-        if a and not is_abstain(a):
+        if src in SOURCES and a and not is_abstain(a):
             items.append((qid, src, r["question"], a))
 
 rows, total_tokens = [], 0
@@ -50,6 +53,6 @@ for qid, src, q, a in tqdm(items):
 res = pd.DataFrame(rows)
 res.to_json(f"data/claims_{SPLIT}.jsonl", orient="records", lines=True)
 
-print(f"\n{len(res)} claims written to data/claims_{SPLIT}.jsonl")
+print(f"\n{len(res)} claims written to data/claims_{SPLIT}.jsonl (sources: {sorted(SOURCES)})")
 print(res["source"].value_counts().to_string())
 print(f"Total tokens (including cached calls): {total_tokens}")

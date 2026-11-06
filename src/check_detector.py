@@ -62,9 +62,12 @@ for lab, desc in (("y_len", "original labels (lenient metric)"),
             print(f"  Config {src}: answered {len(sub)}, wrong {int(sub[lab].sum())}, flagged {ms['flagged']} "
                   f"(TP {ms['tp']}, FP {ms['fp']}), P={ms['P']:.3f}, R={ms['R']:.3f}")
 
-mp = pm(pairs.y, 1 - pairs[COL0], T0)
-print(f"\nHaluEval pairs: AUC={roc_auc_score(pairs.y, 1 - pairs[COL0]):.3f} | "
-      f"P={mp['P']:.3f} R={mp['R']:.3f} F1={mp['F1']:.3f}")
+if len(pairs):
+    mp = pm(pairs.y, 1 - pairs[COL0], T0)
+    print(f"\nHaluEval pairs: AUC={roc_auc_score(pairs.y, 1 - pairs[COL0]):.3f} | "
+          f"P={mp['P']:.3f} R={mp['R']:.3f} F1={mp['F1']:.3f}")
+else:
+    print("\n(no HaluEval pair claims for this split yet)")
 
 # ---- B. Sensitivity of the threshold to the labels (validation only) ----------------
 if SPLIT == "val":
