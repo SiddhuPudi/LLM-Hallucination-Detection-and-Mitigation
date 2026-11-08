@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score
 from detector import load_scored
+from labels import correct_verified
 
 SPLIT = sys.argv[1] if len(sys.argv) > 1 else "val"
 chosen = json.load(open("results/chosen_detector.json"))
@@ -22,10 +23,9 @@ rs = pd.read_csv(f"results/rescored_{SPLIT}.csv")
 cfg = {"B RAG (k=3)": "B", "C RAG+grounded (k=3)": "C"}
 r2 = rs[rs.config.isin(cfg)].copy()
 r2["source"] = r2.config.map(cfg)
-abst = r2["abst"].astype(bool)
-incomplete = r2["question"].astype(str).str.startswith(INCOMPLETE)
 r2["y_len"] = 1 - r2["lenient"].astype(int)                       # original labels
-r2["y_cor"] = 1 - ((r2["lenient"] == 1) | ((r2["short"] == 1) & ~abst & ~incomplete)).astype(int)
+r2["y_cor"] = [1 - int(correct_verified(p, g, q)) for p, g, q in
+               zip(r2["pred"].astype(str), r2["gold"].astype(str), r2["question"].astype(str))]
 pipe = v[v.source.isin(["B", "C"])].merge(r2[["id", "source", "y_len", "y_cor"]], on=["id", "source"])
 
 pairs = v[v.source.isin(["right", "halluc"])].copy()
