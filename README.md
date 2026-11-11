@@ -6,6 +6,7 @@
 [![Embeddings](https://img.shields.io/badge/Embeddings-all--MiniLM--L6--v2-blue?style=flat-square)](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2)
 [![Python](https://img.shields.io/badge/Python-3.10%2B%20%7C%203.14-blue?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![Status](https://img.shields.io/badge/Status-Final%20Test%20Evaluation%20Complete-success?style=flat-square)]()
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
 An empirical research and engineering project studying, detecting, and mitigating hallucinations in Large Language Model (LLM) Question-Answering (QA) systems using the **HaluEval QA** benchmark across 400 evaluated questions (`dev`, `val`, and `test` splits).
 
@@ -74,7 +75,7 @@ All experiments were conducted with greedy decoding ($T = 0.0$) using `openai/gp
 
 ### 2. 🔬 Statistical Rigor & Paired Differences (Test Split: 200 Questions, 5,000 Bootstrap Resamples)
 
-Evaluated using 95% percentile bootstrap intervals with [`src/final_eval.py`](file:///Users/thrivikrampudi/Downloads/Projects/LLM%20Hallucination%20Detection%20%26%20Mitigation/src/final_eval.py):
+Evaluated using 95% percentile bootstrap intervals with [`src/final_eval.py`](https://github.com/SiddhuPudi/LLM-Hallucination-Detection-and-Mitigation/blob/main/src/final_eval.py):
 
 | Paired Difference ($X - Y$) | $\Delta$ Verified Correct [95% CI] | $\Delta$ Wrong-and-Answered [95% CI] | Statistical Interpretation |
 | --- | :---: | :---: | --- |
@@ -113,7 +114,7 @@ Retriever: `sentence-transformers/all-MiniLM-L6-v2` (384-dimensional dense vecto
 
 ### 5. 🛡️ Verification Engine & Threshold Tuning (`results/chosen_detector.json`)
 
-Questions and answers are rewritten into atomic declarative claims via LLM ([`src/make_claims.py`](file:///Users/thrivikrampudi/Downloads/Projects/LLM%20Hallucination%20Detection%20%26%20Mitigation/src/make_claims.py)). The detector evaluates claims against retrieved evidence using `DeBERTa-v3-base-mnli-fever-anli` NLI entailment and novel **Lexical Support** scoring ([`src/detector.py`](file:///Users/thrivikrampudi/Downloads/Projects/LLM%20Hallucination%20Detection%20%26%20Mitigation/src/detector.py)).
+Questions and answers are rewritten into atomic declarative claims via LLM ([`src/make_claims.py`](https://github.com/SiddhuPudi/LLM-Hallucination-Detection-and-Mitigation/blob/main/src/make_claims.py)). The detector evaluates claims against retrieved evidence using `DeBERTa-v3-base-mnli-fever-anli` NLI entailment and novel **Lexical Support** scoring ([`src/detector.py`](https://github.com/SiddhuPudi/LLM-Hallucination-Detection-and-Mitigation/blob/main/src/detector.py)).
 
 The hallucination score is $1 - \text{support}$; flagged if score $\ge \tau$.
 
@@ -135,7 +136,7 @@ The classifier's discriminative ability generalized remarkably well across indep
 
 ### 6. ⚔️ Mitigation vs Verification-Only Baselines (Experiments E5 & E6)
 
-Computed offline via [`src/verify_only.py`](file:///Users/thrivikrampudi/Downloads/Projects/LLM%20Hallucination%20Detection%20%26%20Mitigation/src/verify_only.py) to isolate the value of active mitigation (retrieval expansion + regeneration) versus passive abstention ("verify and abstain"):
+Computed offline via [`src/verify_only.py`](https://github.com/SiddhuPudi/LLM-Hallucination-Detection-and-Mitigation/blob/main/src/verify_only.py) to isolate the value of active mitigation (retrieval expansion + regeneration) versus passive abstention ("verify and abstain"):
 
 | Configuration | Test Correct | Test Wrong | Test Abstained | Pooled (400) Correct | Pooled Wrong | Pooled Abstained |
 | --- | :---: | :---: | :---: | :---: | :---: | :---: |
@@ -165,7 +166,7 @@ Across 400 pooled questions, the loop was triggered for 81 questions (64 abstent
 
 ### 2. 🔍 Post-Hoc Audit of Remaining Test Errors (16 Wrong Answers in Config D Keep)
 
-Detailed manual inspection ([`results/report.md`](file:///Users/thrivikrampudi/Downloads/Projects/LLM%20Hallucination%20Detection%20%26%20Mitigation/results/report.md#appendix-d-post-hoc-reading-of-the-16-wrong-answers-after-the-loop-test-keep-policy)) revealed:
+Detailed manual inspection ([`results/report.md`](https://github.com/SiddhuPudi/LLM-Hallucination-Detection-and-Mitigation/blob/main/results/report.md#appendix-d-post-hoc-reading-of-the-16-wrong-answers-after-the-loop-test-keep-policy)) revealed:
 
 - **10 Benign Metric Artifacts (62.5%):**
   - *Synonyms / Aliases:* *"United States"* for *"American"*, *"Torah"* for *"Law of Moses"*, *"Arctic Sea"* for *"Arctic Ocean"*.
@@ -178,7 +179,7 @@ Detailed manual inspection ([`results/report.md`](file:///Users/thrivikrampudi/D
 ### 3. 🧩 The Missing Entity Phenomenon in NLI
 
 Raw DeBERTa NLI generated 37 false alarms on dev because Wikipedia passages omit entity names or start mid-sentence with pronouns (*"It was founded in 1996 by..."*, *"its long-time leader..."*). The claim explicitly names the entity, breaking coreference for NLI.
-The novel **Lexical Support** metric ([`src/detector.py`](file:///Users/thrivikrampudi/Downloads/Projects/LLM%20Hallucination%20Detection%20%26%20Mitigation/src/detector.py)) resolved this by checking novel content word overlap, cutting false alarms by over 50%.
+The novel **Lexical Support** metric ([`src/detector.py`](https://github.com/SiddhuPudi/LLM-Hallucination-Detection-and-Mitigation/blob/main/src/detector.py)) resolved this by checking novel content word overlap, cutting false alarms by over 50%.
 
 ---
 
@@ -478,3 +479,9 @@ Built using [Sentence-Transformers](https://www.sbert.net/), [DeBERTa-v3 (Moritz
 - **Harshith** (23BDS058)
 - **Sadan** (23BDS048)
 - **Chaitra** (23BDS016)
+
+---
+
+## 📄 License
+
+This repository is licensed under the [MIT License](LICENSE).
