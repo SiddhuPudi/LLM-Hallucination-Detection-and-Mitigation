@@ -138,3 +138,5 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 
+!video_project/assembly/final_render/LLM_Hallucination_Detection_and_Mitigation.mp4
+video_project/*
